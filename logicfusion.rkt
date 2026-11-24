@@ -204,3 +204,80 @@
       (bool-type () 'bool)
       (void-type () 'void)
       (sat-type () 'sat))))
+
+(define eval-program
+  (lambda (pgm)
+    (cases program pgm
+      (a-program (g-decls main-exp)
+        (let ((global-env (eval-global-decls g-decls (empty-env))))
+          (eval-expression main-exp global-env))))))
+
+(define eval-global-decls
+  (lambda (decls env)
+    (if (null? decls)
+        env
+        (let ((first-decl (car decls))
+              (rest-decls (cdr decls)))
+          (cases global-decl first-decl
+            (var-decl (t-spec id exp)
+              (let ((raw-val (eval-expression exp env))
+                    (type-sym (type-spec->symbol t-spec)))
+                (let ((val (check-and-coerce-type type-sym raw-val)))
+                  (let ((ref (a-ref #f type-sym (vector val))))
+                    (eval-global-decls rest-decls 
+                                       (extend-env (list id) (list ref) env))))))
+            
+            (const-decl (t-spec id exp)
+              (let ((raw-val (eval-expression exp env))
+                    (type-sym (type-spec->symbol t-spec)))
+                (let ((val (check-and-coerce-type type-sym raw-val)))
+                  (let ((ref (a-ref #t type-sym (vector val))))
+                    (eval-global-decls rest-decls 
+                                       (extend-env (list id) (list ref) env)))))))))))
+
+
+(define eval-expression
+  (lambda (exp env)
+    (cases expression exp
+      (lit-exp (datum) datum)
+      (float-exp (datum) datum)
+      (string-exp (datum) datum)
+      (bool-exp (b-val)
+        (cases bool-val b-val
+          (true-bool () #t)
+          (false-bool () #f)))
+
+      (var-exp (id)
+        (apply-env env id))
+
+      (assign-exp (id rhs-exp)
+        (let ((rhs-val (eval-expression rhs-exp env))
+              (ref (apply-env-ref env id)))
+          (setref! ref rhs-val)
+          rhs-val))
+
+      (binop-exp (exp1 op exp2)
+        (let ((val1 (eval-expression exp1 env))
+              (val2 (eval-expression exp2 env)))
+          (apply-primitive-op op val1 val2)))
+
+      (fnc-exp (num-vars first-clause rest-clauses)
+        (parse-fnc-to-sat num-vars first-clause rest-clauses)))))
+
+(define apply-primitive-op
+  (lambda (op val1 val2)
+    (cases primitive-op op
+      (add-op () (+ val1 val2))
+      (sub-op () (- val1 val2))
+      (mul-op () (* val1 val2))
+      (div-op () (/ val1 val2))
+      (eq-op () (equal? val1 val2))
+      (neq-op () (not (equal? val1 val2)))
+      (gt-op () (> val1 val2))
+      (lt-op () (< val1 val2))
+      (gte-op () (>= val1 val2))
+      (lte-op () (<= val1 val2)))))
+
+(define run
+  (lambda (code-string)
+    (eval-program (scan&parse code-string))))
