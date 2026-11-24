@@ -151,3 +151,56 @@
       (else (let ((arg (list-index sym (cdr lst))))
               (if arg (+ arg 1) #f))))))
 
+(define-datatype sat-value sat-value?
+  (sat-instance (num-vars integer?)
+                (clauses list?)))
+
+(define get-value-type
+  (lambda (val)
+    (cond
+      ((and (integer? val) (exact? val)) 'int)
+      ((real? val) 'float)
+      ((string? val) 'string)
+      ((boolean? val) 'bool)
+      ((sat-value? val) 'sat)
+      (else 'unknown))))
+
+(define check-and-coerce-type
+  (lambda (expected-type val)
+    (if (eqv? expected-type 'void)
+        val
+        (let ((val-type (get-value-type val)))
+          (cond
+            ((eqv? expected-type val-type) val)
+            ((and (eqv? expected-type 'float) (eqv? val-type 'int))
+             (exact->inexact val))
+            (else
+             (eopl:error 'check-and-coerce-type 
+                         "Error de Tipo: Se esperaba ~s pero se obtuvo ~s" 
+                         expected-type val-type)))))))
+
+(define extract-literal-val
+  (lambda (lit-ast)
+    (cases literal-sat lit-ast
+      (pos-literal (num) num)
+      (neg-literal (num) (- num)))))
+
+(define extract-clause
+  (lambda (clause-ast)
+    (cases clausula-sat clause-ast
+      (sat-clause (first-lit rest-lits)
+        (map extract-literal-val (cons first-lit rest-lits))))))
+
+(define parse-fnc-to-sat
+  (lambda (num-vars first-clause rest-clauses)
+    (sat-instance num-vars (map extract-clause (cons first-clause rest-clauses)))))
+
+(define type-spec->symbol
+  (lambda (t-spec)
+    (cases type-spec t-spec
+      (int-type () 'int)
+      (float-type () 'float)
+      (string-type () 'string)
+      (bool-type () 'bool)
+      (void-type () 'void)
+      (sat-type () 'sat))))
