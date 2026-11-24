@@ -11,14 +11,7 @@
 ;; Repositorio: https://github.com/juanmunozdelgado-oss/Proyecto-LogicFusion.git
 ;; Declaración de IA: Se utilizó asistencia de LLM como apoyo de consulta y 
 ;;                    estructuración según las guías del curso.
-;; =============================================================================
-
-
-
-#lang eopl
-;; =============================================================================
-;; PROYECTO FINAL: LOGICFUSION
-;; Curso: Fundamentos de Lenguajes de Programación - Universidad del Valle
+;;
 ;; 
 ;; Módulo Inicial:
 ;;  - Especificación Léxica y Gramatical Base (GLOBALS / PROGRAM)[cite: 1, 12]
@@ -108,6 +101,12 @@
     (clausula-sat ("(" literal-sat (arbno "or" literal-sat) ")") sat-clause)
     (literal-sat (number) pos-literal)
     (literal-sat ("-" number) neg-literal)
+
+
+    
+    ;; 8. Estructuras de control y bloques secuenciales
+    (expression ("while" "[" expression "]" "{" expression "}") while-exp)
+    (expression ("begin" expression (arbno ";" expression) "end") begin-exp)
    ))
 
 ;; Generación automática de tipos de datos abstractos (Datatypes) e Interpretador SLLGEN[cite: 1, 22]
@@ -261,6 +260,15 @@
 ;; 5. EVALUADOR PRINCIPAL (GLOBALS + PROGRAM)[cite: 1, 2, 265]
 ;; =============================================================================
 
+;; Auxiliar para evaluar condiciones en estructuras de control
+(define true-value?
+  (lambda (val)
+    (cond
+      ((boolean? val) val)
+      ((number? val) (not (zero? val)))
+      (else (eopl:error 'true-value? "Condición no válida: ~s" val)))))
+
+
 ;; Evalúa un programa completo: procesa GLOBALS y luego la función main[cite: 1, 2, 265]
 (define eval-program
   (lambda (pgm)
@@ -330,7 +338,23 @@
 
       ;; Construcción de la instancia interna SAT (FNC)[cite: 5, 6]
       (fnc-exp (num-vars first-clause rest-clauses)
-        (parse-fnc-to-sat num-vars first-clause rest-clauses)))))
+        (parse-fnc-to-sat num-vars first-clause rest-clauses))
+
+      ;; Estructuras de control y bloques secuenciales
+      (while-exp (test-exp body-exp)
+        (let loop ((last-val 0))
+          (if (true-value? (eval-expression test-exp env))
+              (loop (eval-expression body-exp env))
+              last-val)))
+
+      (begin-exp (exp exps)
+        (let loop ((acc (eval-expression exp env))
+                   (rest exps))
+          (if (null? rest)
+              acc
+              (loop (eval-expression (car rest) env) (cdr rest)))))
+      
+      )))
 
 ;; Evaluación de operadores aritméticos y relacionales binarios[cite: 3]
 (define apply-primitive-op
@@ -383,3 +407,9 @@ PROGRAM {
   }
 }
 ")
+
+
+
+;; Pruebas ciclo while (suma de 1 hasta 10 -> 55)
+(scan&parse "GLOBALS { int i = 0; int sum = 0; } PROGRAM { proc main() { return while [(i < 10)] { begin set i -> (i + 1); set sum -> (sum + i) end }; } }")
+(run "GLOBALS { int i = 0; int sum = 0; } PROGRAM { proc main() { return while [(i < 10)] { begin set i -> (i + 1); set sum -> (sum + i) end }; } }")
