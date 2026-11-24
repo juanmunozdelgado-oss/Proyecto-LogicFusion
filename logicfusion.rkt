@@ -107,6 +107,7 @@
     ;; 8. Estructuras de control y bloques secuenciales
     (expression ("while" "[" expression "]" "{" expression "}") while-exp)
     (expression ("begin" expression (arbno ";" expression) "end") begin-exp)
+    (expression ("if" "[" expression "]" "{" expression "}" "else" "{" expression "}") if-exp)
    ))
 
 ;; Generación automática de tipos de datos abstractos (Datatypes) e Interpretador SLLGEN[cite: 1, 22]
@@ -353,6 +354,11 @@
           (if (null? rest)
               acc
               (loop (eval-expression (car rest) env) (cdr rest)))))
+
+      (if-exp (test-exp true-exp false-exp)
+        (if (true-value? (eval-expression test-exp env))
+            (eval-expression true-exp env)
+            (eval-expression false-exp env)))
       
       )))
 
@@ -413,3 +419,11 @@ PROGRAM {
 ;; Pruebas ciclo while (suma de 1 hasta 10 -> 55)
 (scan&parse "GLOBALS { int i = 0; int sum = 0; } PROGRAM { proc main() { return while [(i < 10)] { begin set i -> (i + 1); set sum -> (sum + i) end }; } }")
 (run "GLOBALS { int i = 0; int sum = 0; } PROGRAM { proc main() { return while [(i < 10)] { begin set i -> (i + 1); set sum -> (sum + i) end }; } }")
+
+
+;; Pruebas condicional if-else (condición verdadera -> 100, condición falsa -> 200)
+(scan&parse "GLOBALS { int x = 10; } PROGRAM { proc main() { return if [(x > 5)] { 100 } else { 200 }; } }")
+(run "GLOBALS { int x = 10; } PROGRAM { proc main() { return if [(x > 5)] { 100 } else { 200 }; } }")
+
+(scan&parse "GLOBALS { int x = 2; } PROGRAM { proc main() { return if [(x > 5)] { 100 } else { 200 }; } }")
+(run "GLOBALS { int x = 2; } PROGRAM { proc main() { return if [(x > 5)] { 100 } else { 200 }; } }")
