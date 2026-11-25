@@ -109,6 +109,7 @@
     (expression ("begin" expression (arbno ";" expression) "end") begin-exp)
     (expression ("if" "[" expression "]" "{" expression "}" "else" "{" expression "}") if-exp)
     (expression ("for" "[" expression ";" expression ";" expression "]" "{" expression "}") for-exp)
+    (expression ("switch" "[" expression "]" "{" (arbno "case" expression ":" expression ";") "default" ":" expression "}") switch-exp)
    ))
 
 ;; Generación automática de tipos de datos abstractos (Datatypes) e Interpretador SLLGEN[cite: 1, 22]
@@ -371,6 +372,16 @@
                   (eval-expression step-exp env)
                   (loop res))
                 last-val))))
+
+      
+      (switch-exp (target-exp case-vals case-exps default-exp)
+        (let ((target (eval-expression target-exp env)))
+          (let loop ((vals case-vals) (exps case-exps))
+            (cond
+              ((null? vals) (eval-expression default-exp env))
+              ((equal? target (eval-expression (car vals) env))
+               (eval-expression (car exps) env))
+              (else (loop (cdr vals) (cdr exps)))))))
       
       )))
 
@@ -443,3 +454,10 @@ PROGRAM {
 ;; Prueba ciclo for (suma del 1 al 5 -> 15)
 (scan&parse "GLOBALS { int i = 0; int sum = 0; } PROGRAM { proc main() { return for [ set i -> 1 ; (i < 6) ; set i -> (i + 1) ] { set sum -> (sum + i) }; } }")
 (run "GLOBALS { int i = 0; int sum = 0; } PROGRAM { proc main() { return for [ set i -> 1 ; (i < 6) ; set i -> (i + 1) ] { set sum -> (sum + i) }; } }")
+
+;; Pruebas switch: coincide en caso 2 -> 200; cae en default -> 999
+(scan&parse "GLOBALS { int op = 2; } PROGRAM { proc main() { return switch [op] { case 1: 100; case 2: 200; default: 999 }; } }")
+(run "GLOBALS { int op = 2; } PROGRAM { proc main() { return switch [op] { case 1: 100; case 2: 200; default: 999 }; } }")
+
+(scan&parse "GLOBALS { int op = 7; } PROGRAM { proc main() { return switch [op] { case 1: 100; case 2: 200; default: 999 }; } }")
+(run "GLOBALS { int op = 7; } PROGRAM { proc main() { return switch [op] { case 1: 100; case 2: 200; default: 999 }; } }")
