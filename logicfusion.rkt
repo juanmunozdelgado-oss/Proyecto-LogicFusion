@@ -111,6 +111,10 @@
     (expression ("for" "[" expression ";" expression ";" expression "]" "{" expression "}") for-exp)
     (expression ("switch" "[" expression "]" "{" (arbno "case" expression ":" expression ";") "default" ":" expression "}") switch-exp)
     (expression ("BLOCK" "LOCALS" "{" (arbno identifier "=" expression ";") "}" "{" expression "}") block-exp)
+
+    ;; 9. Procedimientos
+    (expression ("lambda" "(" (separated-list identifier ",") ")" expression) lambda-exp)
+    (expression ("call" expression "(" (separated-list expression ",") ")") call-exp)
    ))
 
 ;; Generación automática de tipos de datos abstractos (Datatypes) e Interpretador SLLGEN[cite: 1, 22]
@@ -211,7 +215,7 @@
       ((string? val) 'string)
       ((boolean? val) 'bool)
       ((sat-value? val) 'sat)
-      ;; NOTA PARA EL GRUPO: Aquí se agregarán los casos para 'list, 'vector, 'dict y 'proc
+      ((proc-val? val) 'proc)
       (else 'unknown))))
 
 ;; Revisa coincidencia de tipos y realiza conversión implícita (coerción) de int a float[cite: 2]
@@ -259,6 +263,12 @@
       (bool-type () 'bool)
       (void-type () 'void)
       (sat-type () 'sat))))
+
+;; Procedimientos: representación de valores proc
+(define-datatype proc-val proc-val?
+  (procedure (ids (list-of symbol?))
+             (body expression?)
+             (saved-env environment?)))
 
 ;; =============================================================================
 ;; 5. EVALUADOR PRINCIPAL (GLOBALS + PROGRAM)[cite: 1, 2, 265]
@@ -388,8 +398,28 @@
         (let* ((vals (map (lambda (e) (eval-expression e env)) exps))
                (refs (map (lambda (v) (a-ref #f (get-value-type v) (vector v))) vals)))
           (eval-expression body-exp (extend-env ids refs env))))
+
+      ;;Procedimientos
+      (lambda-exp (ids body)
+        (procedure ids body env))
+
+      (call-exp (rator rands)
+        (let ((f (eval-expression rator env))
+              (args (map (lambda (e) (eval-expression e env)) rands)))
+          (apply-procedure f args)))
       
       )))
+
+
+;; Aplicación de procedimientos
+(define apply-procedure
+  (lambda (f args)
+    (cases proc-val f
+      (procedure (ids body saved-env)
+        (eval-expression body
+          (extend-env ids
+                      (map (lambda (v) (a-ref #f (get-value-type v) (vector v))) args)
+                      saved-env))))))
 
 ;; Evaluación de operadores aritméticos y relacionales binarios[cite: 3]
 (define apply-primitive-op
@@ -476,3 +506,8 @@ PROGRAM {
 ;; Prueba BLOCK con dos variables locales: a = 2, b = 3 -> devuelve 6
 (scan&parse "GLOBALS { int x = 10; } PROGRAM { proc main() { return BLOCK LOCALS { a = 2; b = 3; } { (a * b) }; } }")
 (run "GLOBALS { int x = 10; } PROGRAM { proc main() { return BLOCK LOCALS { a = 2; b = 3; } { (a * b) }; } }")
+
+
+;; 9. Procedimientos: lambda y call sin argumentos -> 42
+(scan&parse "GLOBALS { int x = 1; } PROGRAM { proc main() { return BLOCK LOCALS { f = lambda () 42; } { call f () }; } }")
+(run "GLOBALS { int x = 1; } PROGRAM { proc main() { return BLOCK LOCALS { f = lambda () 42; } { call f () }; } }")
