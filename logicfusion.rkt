@@ -116,6 +116,7 @@
     (expression ("lambda" "(" (arbno identifier) ")" expression) lambda-exp)
     (expression ("call" expression "(" (arbno expression) ")") call-exp)
     (expression ("letrec" identifier "=" expression "in" expression) letrec-exp)
+    (expression ("solve" "(" expression ")") solve-exp)
    ))
 
 ;; Generación automática de tipos de datos abstractos (Datatypes) e Interpretador SLLGEN[cite: 1, 22]
@@ -415,6 +416,12 @@
                (new-env (extend-env (list id) (list (a-ref #f 'proc cell)) env)))
           (vector-set! cell 0 (eval-expression rhs new-env))
           (eval-expression body new-env)))
+
+      (solve-exp (e)
+        (let ((inst (eval-expression e env)))
+          (cases sat-value inst
+            (sat-instance (n clauses)
+              (if (sat-solvable? n clauses) 1 0)))))
       
       )))
 
@@ -428,6 +435,42 @@
           (extend-env ids
                       (map (lambda (v) (a-ref #f (get-value-type v) (vector v))) args)
                       saved-env))))))
+
+;; Búsqueda exhaustiva sobre todas las asignaciones
+(define sat-abs (lambda (x) (if (< x 0) (- x) x)))
+(define sat-append
+  (lambda (l1 l2)
+    (if (null? l1) l2 (cons (car l1) (sat-append (cdr l1) l2)))))
+(define sat-all-assignments
+  (lambda (n)
+    (if (= n 0)
+        (list '())
+        (let ((rest (sat-all-assignments (- n 1))))
+          (sat-append (map (lambda (a) (cons #t a)) rest)
+                      (map (lambda (a) (cons #f a)) rest))))))
+(define sat-lit-true?
+  (lambda (lit assign)
+    (let ((v (list-ref assign (- (sat-abs lit) 1))))
+      (if (> lit 0) v (not v)))))
+(define sat-clause-true?
+  (lambda (clause assign)
+    (cond ((null? clause) #f)
+          ((sat-lit-true? (car clause) assign) #t)
+          (else (sat-clause-true? (cdr clause) assign)))))
+(define sat-formula-true?
+  (lambda (clauses assign)
+    (cond ((null? clauses) #t)
+          ((sat-clause-true? (car clauses) assign)
+           (sat-formula-true? (cdr clauses) assign))
+          (else #f))))
+(define sat-solvable?
+  (lambda (n clauses)
+    (let loop ((assigns (sat-all-assignments n)))
+      (cond ((null? assigns) #f)
+            ((sat-formula-true? clauses (car assigns)) #t)
+            (else (loop (cdr assigns)))))))
+
+
 
 ;; Evaluación de operadores aritméticos y relacionales binarios[cite: 3]
 (define apply-primitive-op
@@ -531,3 +574,12 @@ PROGRAM {
 ;; Prueba PROC: factorial recursivo con letrec, factorial de 3 -> devuelve 6
 (scan&parse "GLOBALS { int x = 1; } PROGRAM { proc main() { return letrec fact = lambda (n) if [(n < 1)] { 1 } else { (n * call fact ((n - 1))) } in call fact (3); } }")
 (run "GLOBALS { int x = 1; } PROGRAM { proc main() { return letrec fact = lambda (n) if [(n < 1)] { 1 } else { (n * call fact ((n - 1))) } in call fact (3); } }")
+
+
+;; Prueba SAT: instancia satisfactible (x2 = verdadero) -> devuelve 1
+(scan&parse "GLOBALS { int x = 1; } PROGRAM { proc main() { return solve(FNC 2 ( (1 or 2) and (-1 or 2) )); } }")
+(run "GLOBALS { int x = 1; } PROGRAM { proc main() { return solve(FNC 2 ( (1 or 2) and (-1 or 2) )); } }")
+
+;; Prueba SAT: instancia insatisfactible (x1 y -x1 a la vez) -> devuelve 0
+(scan&parse "GLOBALS { int x = 1; } PROGRAM { proc main() { return solve(FNC 2 ( (1 or 2) and (-1 or 2) )); } }")
+(run "GLOBALS { int x = 1; } PROGRAM { proc main() { return solve(FNC 1 ( (1) and (-1) )); } }")
