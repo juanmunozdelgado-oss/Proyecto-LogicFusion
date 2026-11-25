@@ -108,6 +108,7 @@
     (expression ("while" "[" expression "]" "{" expression "}") while-exp)
     (expression ("begin" expression (arbno ";" expression) "end") begin-exp)
     (expression ("if" "[" expression "]" "{" expression "}" "else" "{" expression "}") if-exp)
+    (expression ("for" "[" expression ";" expression ";" expression "]" "{" expression "}") for-exp)
    ))
 
 ;; Generación automática de tipos de datos abstractos (Datatypes) e Interpretador SLLGEN[cite: 1, 22]
@@ -359,6 +360,17 @@
         (if (true-value? (eval-expression test-exp env))
             (eval-expression true-exp env)
             (eval-expression false-exp env)))
+
+      
+      (for-exp (init-exp cond-exp step-exp body-exp)
+        (begin
+          (eval-expression init-exp env)
+          (let loop ((last-val 0))
+            (if (true-value? (eval-expression cond-exp env))
+                (let ((res (eval-expression body-exp env)))
+                  (eval-expression step-exp env)
+                  (loop res))
+                last-val))))
       
       )))
 
@@ -427,3 +439,7 @@ PROGRAM {
 
 (scan&parse "GLOBALS { int x = 2; } PROGRAM { proc main() { return if [(x > 5)] { 100 } else { 200 }; } }")
 (run "GLOBALS { int x = 2; } PROGRAM { proc main() { return if [(x > 5)] { 100 } else { 200 }; } }")
+
+;; Prueba ciclo for (suma del 1 al 5 -> 15)
+(scan&parse "GLOBALS { int i = 0; int sum = 0; } PROGRAM { proc main() { return for [ set i -> 1 ; (i < 6) ; set i -> (i + 1) ] { set sum -> (sum + i) }; } }")
+(run "GLOBALS { int i = 0; int sum = 0; } PROGRAM { proc main() { return for [ set i -> 1 ; (i < 6) ; set i -> (i + 1) ] { set sum -> (sum + i) }; } }")
