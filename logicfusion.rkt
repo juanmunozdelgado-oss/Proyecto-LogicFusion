@@ -113,8 +113,8 @@
     (expression ("BLOCK" "LOCALS" "{" (arbno identifier "=" expression ";") "}" "{" expression "}") block-exp)
 
     ;; 9. Procedimientos
-    (expression ("lambda" "(" (separated-list identifier ",") ")" expression) lambda-exp)
-    (expression ("call" expression "(" (separated-list expression ",") ")") call-exp)
+    (expression ("lambda" "(" (arbno identifier) ")" expression) lambda-exp)
+    (expression ("call" expression "(" (arbno expression) ")") call-exp)
    ))
 
 ;; Generación automática de tipos de datos abstractos (Datatypes) e Interpretador SLLGEN[cite: 1, 22]
@@ -508,6 +508,10 @@ PROGRAM {
 (run "GLOBALS { int x = 10; } PROGRAM { proc main() { return BLOCK LOCALS { a = 2; b = 3; } { (a * b) }; } }")
 
 
-;; 9. Procedimientos: lambda y call sin argumentos -> 42
-(scan&parse "GLOBALS { int x = 1; } PROGRAM { proc main() { return BLOCK LOCALS { f = lambda () 42; } { call f () }; } }")
-(run "GLOBALS { int x = 1; } PROGRAM { proc main() { return BLOCK LOCALS { f = lambda () 42; } { call f () }; } }")
+;; Prueba PROC: lambda con un parámetro, llamada con 5 -> devuelve 6
+(scan&parse "GLOBALS { int x = 1; } PROGRAM { proc main() { return BLOCK LOCALS { f = lambda (y) (y + 1); } { call f (5) }; } }")
+(run "GLOBALS { int x = 1; } PROGRAM { proc main() { return BLOCK LOCALS { f = lambda (y) (y + 1); } { call f (5) }; } }")
+
+;; Prueba PROC: lambda con dos parámetros, llamada con 3 y 4 -> devuelve 12
+(scan&parse "GLOBALS { int x = 1; } PROGRAM { proc main() { return BLOCK LOCALS { f = lambda (a b) (a * b); } { call f (3 4) }; } }")
+(run "GLOBALS { int x = 1; } PROGRAM { proc main() { return BLOCK LOCALS { f = lambda (a b) (a * b); } { call f (3 4) }; } }")
