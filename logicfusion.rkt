@@ -66,6 +66,7 @@
     (type-spec ("bool") bool-type)
     (type-spec ("void") void-type)
     (type-spec ("sat") sat-type)
+    (type-spec ("list" "<" type-spec ">") list-type)
 
     ;; 4. Expresiones Primarias y Literales[cite: 1, 2]
     (expression (float-number) float-exp)
@@ -81,8 +82,25 @@
     ;; 5. Asignación con palabra reservada set para mantener gramática LL(1)[cite: 3, 178]
     (expression ("set" identifier "->" expression) assign-exp)
 
-    ;; 6. Operaciones Aritméticas y Relacionales Binarias[cite: 3]
-    (expression ("(" expression primitive-op expression ")") binop-exp)
+    ;; 6. Operaciones binarias y listas inmutables
+    ;; Después de la primera expresión, el operador, la coma o el cierre
+    ;; distinguen una operación binaria de un literal de lista.
+    (expression ("(" expression paren-tail) paren-exp)
+
+    (paren-tail (primitive-op expression ")") binop-tail)
+    (paren-tail ("," expression (arbno "," expression) ")") list-tail)
+    (paren-tail (")") singleton-tail)
+
+    ;; Primitivas de listas inmutables del Adendo 5
+    (expression ("empty") empty-list-exp)
+    (expression ("empty?" "(" expression ")") empty-list-test-exp)
+    (expression ("make-list" "(" expression "," expression ")") make-list-exp)
+    (expression ("list?" "(" expression ")") list-test-exp)
+    (expression ("head" "(" expression ")") list-head-exp)
+    (expression ("tail" "(" expression ")") list-tail-exp)
+    (expression ("append" "(" expression "," expression ")") list-append-exp)
+    (expression ("ref-list" "(" expression "," expression ")") list-ref-exp)
+    (expression ("length" "(" expression ")") list-length-exp)
 
     (primitive-op ("+") add-op)
     (primitive-op ("-") sub-op)
@@ -129,13 +147,34 @@
 ;; 3. GESTIÓN DE MEMORIA Y AMBIENTES (Clase 16 - #lang eopl)[cite: 171, 189, 193]
 ;; =============================================================================
 
+;; Un tipo puede ser simple, como int, o compuesto, como (list int).
+(define type-descriptor?
+  (lambda (type)
+    (or (symbol? type)
+        (and (list? type)
+             (not (null? type))))))
+
+;; Indica si un descriptor representa una lista.
+(define list-type-descriptor?
+  (lambda (type)
+    (and (list? type)
+         (= (length type) 2)
+         (eqv? (car type) 'list))))
+
+;; Obtiene T a partir de un descriptor (list T).
+(define list-element-type
+  (lambda (type)
+    (if (list-type-descriptor? type)
+        (cadr type)
+        #f)))
+
 ;; Tipo de dato Referencia (Representa un L-valor en memoria con celda mutable en vector)[cite: 185, 189]
 ;;  - is-const?: Marca #t si es constante (inmutable) o #f si es variable[cite: 2]
-;;  - type-sym: Símbolo del tipo de dato declarado ('int, 'float, etc.)[cite: 2]
+;;  - type-sym: Descriptor del tipo declarado ('int, 'float, '(list int), etc.)
 ;;  - val-cell: Vector de 1 posición para almacenamiento mutable del R-valor[cite: 185, 189]
 (define-datatype reference reference?
   (a-ref (is-const? boolean?)
-         (type-sym symbol?)
+         (type-sym type-descriptor?)
          (val-cell vector?)))
 
 ;; Obtiene el R-valor almacenado dentro de la referencia[cite: 187, 190]
@@ -208,6 +247,138 @@
   (sat-instance (num-vars integer?)
                 (clauses list?)))
 
+;; Representación interna de una lista inmutable.
+;; element-type guarda el tipo de sus elementos o unknown para empty.
+(define-datatype list-value list-value?
+  (a-list (element-type type-descriptor?)
+          (elements list?)))
+
+;; Valida una lista frente a su tipo declarado.
+(define check-list-type
+  (lambda (expected-type val)
+    (if (not (list-value? val))
+        (eopl:error 'check-list-type
+                    "Error de Tipo: Se esperaba una lista")
+        (cases list-value val
+          (a-list (actual-type elements)
+            (let ((expected-element-type
+                   (list-element-type expected-type)))
+              (cond
+                ;; list<void> permite elementos de cualquier tipo.
+                ((eqv? expected-element-type 'void)
+                 (a-list 'void elements))
+
+                ;; empty adopta el tipo declarado de la variable.
+                ((eqv? actual-type 'unknown)
+                 (a-list expected-element-type elements))
+
+                ;; La lista ya tiene el tipo correcto.
+                ((equal? expected-element-type actual-type)
+                 val)
+
+                (else
+                 (eopl:error
+                  'check-list-type
+                  "Error de Tipo: Se esperaba list<~s> pero se obtuvo list<~s>"
+                  expected-element-type
+                  actual-type)))))))))
+
+;; Verifica que un valor sea una lista de LogicFusion.
+(define require-list
+  (lambda (who val)
+    (if (list-value? val)
+        val
+        (eopl:error who
+                    "Error de Tipo: Se esperaba una lista"))))
+
+;; Obtiene los elementos y rechaza las listas vacías.
+(define require-nonempty-elements
+  (lambda (who val)
+    (cases list-value (require-list who val)
+      (a-list (element-type elements)
+        (if (null? elements)
+            (eopl:error who "La lista está vacía")
+            elements)))))
+
+;; Comprueba que todos los valores tengan el tipo esperado.
+;; El tipo void acepta valores heterogéneos.
+(define list-elements-have-type?
+  (lambda (values expected-type)
+    (cond
+      ((null? values) #t)
+      ((eqv? expected-type 'void) #t)
+      ((equal? (get-value-type (car values)) expected-type)
+       (list-elements-have-type? (cdr values) expected-type))
+      (else #f))))
+
+;; Construye una lista y valida la homogeneidad de sus elementos.
+(define make-list-value
+  (lambda (values expected-type)
+    (let ((element-type
+           (cond
+             ((list-type-descriptor? expected-type)
+              (list-element-type expected-type))
+             ((null? values) 'unknown)
+             (else
+              (get-value-type (car values))))))
+      (if (list-elements-have-type? values element-type)
+          (a-list element-type values)
+          (eopl:error
+           'make-list-value
+           "Error de Tipo: Los elementos de la lista deben ser homogéneos")))))
+
+;; Construye una nueva lista agregando un elemento al inicio.
+(define prepend-list-value
+  (lambda (element list-val expected-type)
+    (let ((checked-list
+           (if (list-type-descriptor? expected-type)
+               (check-list-type expected-type
+                                (require-list 'make-list list-val))
+               (require-list 'make-list list-val))))
+      (cases list-value checked-list
+        (a-list (actual-type elements)
+          (let ((result-type
+                 (if (eqv? actual-type 'unknown)
+                     (get-value-type element)
+                     actual-type)))
+            (if (or (eqv? result-type 'void)
+                    (equal? result-type (get-value-type element)))
+                (a-list result-type (cons element elements))
+                (eopl:error
+                 'make-list
+                 "Error de Tipo: El elemento no coincide con el tipo ~s"
+                 result-type))))))))
+
+;; Concatena dos listas sin modificar las originales.
+(define append-list-values
+  (lambda (left right expected-type)
+    (let ((checked-left
+           (if (list-type-descriptor? expected-type)
+               (check-list-type expected-type (require-list 'append left))
+               (require-list 'append left)))
+          (checked-right
+           (if (list-type-descriptor? expected-type)
+               (check-list-type expected-type (require-list 'append right))
+               (require-list 'append right))))
+      (cases list-value checked-left
+        (a-list (left-type left-elements)
+          (cases list-value checked-right
+            (a-list (right-type right-elements)
+              (let ((result-type
+                     (cond
+                       ((eqv? left-type 'unknown) right-type)
+                       ((eqv? right-type 'unknown) left-type)
+                       ((or (eqv? left-type 'void)
+                            (eqv? right-type 'void))
+                        'void)
+                       ((equal? left-type right-type) left-type)
+                       (else
+                        (eopl:error
+                         'append
+                         "Error de Tipo: Las listas tienen tipos incompatibles")))))
+                (a-list result-type
+                        (append left-elements right-elements))))))))))
+
 ;; Infiere el tipo dinámico de un R-valor en tiempo de ejecución[cite: 2]
 (define get-value-type
   (lambda (val)
@@ -216,25 +387,41 @@
       ((real? val) 'float)
       ((string? val) 'string)
       ((boolean? val) 'bool)
+      
       ((sat-value? val) 'sat)
       ((proc-val? val) 'proc)
+      ((list-value? val)
+       (cases list-value val
+         (a-list (element-type elements)
+           (list 'list element-type))))
       (else 'unknown))))
 
-;; Revisa coincidencia de tipos y realiza conversión implícita (coerción) de int a float[cite: 2]
+;; Revisa coincidencia de tipos y realiza conversión implícita de int a float.
 (define check-and-coerce-type
   (lambda (expected-type val)
     (if (eqv? expected-type 'void)
-        val  ;; Las variables void permiten cualquier tipo de dato dinámico[cite: 2]
+        val
         (let ((val-type (get-value-type val)))
           (cond
-            ((eqv? expected-type val-type) val)
-            ;; Coerción int -> float para admitir inicializaciones tipo float x = 20;[cite: 2]
-            ((and (eqv? expected-type 'float) (eqv? val-type 'int))
+            ;; Las listas necesitan revisar también el tipo de sus elementos.
+            ((list-type-descriptor? expected-type)
+             (check-list-type expected-type val))
+
+            ;; Tipos simples iguales.
+            ((equal? expected-type val-type)
+             val)
+
+            ;; Coerción int -> float para valores primitivos.
+            ((and (eqv? expected-type 'float)
+                  (eqv? val-type 'int))
              (exact->inexact val))
+
             (else
-             (eopl:error 'check-and-coerce-type 
-                         "Error de Tipo: Se esperaba ~s pero se obtuvo ~s" 
-                         expected-type val-type)))))))
+             (eopl:error
+              'check-and-coerce-type
+              "Error de Tipo: Se esperaba ~s pero se obtuvo ~s"
+              expected-type
+              val-type)))))))
 
 ;; Extrae el entero positivo o negativo según la producción de literal FNC[cite: 5]
 (define extract-literal-val
@@ -255,7 +442,7 @@
   (lambda (num-vars first-clause rest-clauses)
     (sat-instance num-vars (map extract-clause (cons first-clause rest-clauses)))))
 
-;; Convierte el nodo AST de especificación de tipo a su símbolo correspondiente[cite: 2]
+;; Convierte el nodo AST de un tipo a su descriptor interno.
 (define type-spec->symbol
   (lambda (t-spec)
     (cases type-spec t-spec
@@ -264,7 +451,9 @@
       (string-type () 'string)
       (bool-type () 'bool)
       (void-type () 'void)
-      (sat-type () 'sat))))
+      (sat-type () 'sat)
+      (list-type (element-type)
+        (list 'list (type-spec->symbol element-type))))))
 
 ;; Procedimientos: representación de valores proc
 (define-datatype proc-val proc-val?
@@ -302,18 +491,20 @@
               (rest-decls (cdr decls)))
           (cases global-decl first-decl
             ;; Declaración de Variable Mutable (is-const? = #f)[cite: 2]
-            (var-decl (t-spec id exp)
-              (let ((raw-val (eval-expression exp env))
-                    (type-sym (type-spec->symbol t-spec)))
+                        (var-decl (t-spec id exp)
+              (let* ((type-sym (type-spec->symbol t-spec))
+                     (raw-val
+                      (eval-expression/expected exp env type-sym)))
                 (let ((val (check-and-coerce-type type-sym raw-val)))
                   (let ((ref (a-ref #f type-sym (vector val))))
                     (eval-global-decls rest-decls 
                                        (extend-env (list id) (list ref) env))))))
             
             ;; Declaración de Constante Inmutable (is-const? = #t)[cite: 2]
-            (const-decl (t-spec id exp)
-              (let ((raw-val (eval-expression exp env))
-                    (type-sym (type-spec->symbol t-spec)))
+                        (const-decl (t-spec id exp)
+              (let* ((type-sym (type-spec->symbol t-spec))
+                     (raw-val
+                      (eval-expression/expected exp env type-sym)))
                 (let ((val (check-and-coerce-type type-sym raw-val)))
                   (let ((ref (a-ref #t type-sym (vector val))))
                     (eval-global-decls rest-decls 
@@ -323,9 +514,16 @@
 ;; 6. EVALUADOR DE EXPRESIONES (eval-expression)[cite: 267]
 ;; =============================================================================
 
+;; Entrada normal del evaluador, sin un tipo declarado conocido.
 (define eval-expression
   (lambda (exp env)
+    (eval-expression/expected exp env #f)))
+
+;; Evaluador que también puede recibir el tipo esperado del resultado.
+(define eval-expression/expected
+  (lambda (exp env expected-type)
     (cases expression exp
+      
       ;; Literales Primitivos
       (lit-exp (datum) datum)
       (float-exp (datum) datum)
@@ -341,16 +539,119 @@
 
       ;; Asignación (operador set id -> expression)[cite: 3, 199]
       (assign-exp (id rhs-exp)
-        (let ((rhs-val (eval-expression rhs-exp env))
-              (ref (apply-env-ref env id)))
-          (setref! ref rhs-val)
-          rhs-val))
+        (let ((ref (apply-env-ref env id)))
+          (cases reference ref
+            (a-ref (is-const? type-sym val-cell)
+              (let ((rhs-val
+                     (eval-expression/expected rhs-exp env type-sym)))
+                (setref! ref rhs-val)
+                (deref ref))))))
 
-      ;; Evaluación de Operaciones Binarias Primarias[cite: 3]
-      (binop-exp (exp1 op exp2)
-        (let ((val1 (eval-expression exp1 env))
-              (val2 (eval-expression exp2 env)))
-          (apply-primitive-op op val1 val2)))
+      ;; Distingue operaciones binarias y literales de lista.
+      (paren-exp (first-exp tail)
+        (cases paren-tail tail
+          ;; Caso: (exp1 operador exp2)
+          (binop-tail (op second-exp)
+            (let ((val1 (eval-expression first-exp env))
+                  (val2 (eval-expression second-exp env)))
+              (apply-primitive-op op val1 val2)))
+
+          ;; Caso: (exp1, exp2, ...)
+          (list-tail (second-exp other-exps)
+            (let ((values
+                   (map
+                    (lambda (item)
+                      (eval-expression/expected
+                       item
+                       env
+                       (list-element-type expected-type)))
+                    (cons first-exp
+                          (cons second-exp other-exps)))))
+              (make-list-value values expected-type)))
+
+          ;; Caso: (exp)
+          (singleton-tail ()
+            (make-list-value
+             (list
+              (eval-expression/expected
+               first-exp
+               env
+               (list-element-type expected-type)))
+             expected-type))))
+
+      ;; La lista vacía comienza sin un tipo de elemento conocido.
+      (empty-list-exp ()
+        (a-list 'unknown '()))
+
+      ;; Retorna #t solamente si el valor es una lista vacía.
+      (empty-list-test-exp (arg-exp)
+        (let ((value (eval-expression arg-exp env)))
+          (if (list-value? value)
+              (cases list-value value
+                (a-list (element-type elements)
+                  (null? elements)))
+              #f)))
+
+      ;; Indica si el valor pertenece al tipo list-value.
+      (list-test-exp (arg-exp)
+        (list-value? (eval-expression arg-exp env)))
+
+      ;; Agrega un elemento al inicio y retorna una lista nueva.
+      (make-list-exp (element-exp list-exp)
+        (prepend-list-value
+         (eval-expression/expected
+          element-exp env (list-element-type expected-type))
+         (eval-expression/expected list-exp env expected-type)
+         expected-type))
+
+      ;; Retorna el primer elemento de una lista no vacía.
+      (list-head-exp (arg-exp)
+        (car (require-nonempty-elements
+              'head
+              (eval-expression arg-exp env))))
+
+      ;; Retorna una lista nueva sin el primer elemento.
+      (list-tail-exp (arg-exp)
+        (let ((value (eval-expression arg-exp env)))
+          (cases list-value (require-list 'tail value)
+            (a-list (element-type elements)
+              (if (null? elements)
+                  (eopl:error 'tail "La lista está vacía")
+                  (a-list element-type (cdr elements)))))))
+
+      ;; Une dos listas y retorna una lista nueva.
+      (list-append-exp (left-exp right-exp)
+        (append-list-values
+         (eval-expression/expected left-exp env expected-type)
+         (eval-expression/expected right-exp env expected-type)
+         expected-type))
+
+      ;; Consulta una posición usando índices desde cero.
+      (list-ref-exp (list-exp position-exp)
+        (let ((value (eval-expression list-exp env))
+              (position (eval-expression position-exp env)))
+          (cases list-value (require-list 'ref-list value)
+            (a-list (element-type elements)
+              (cond
+                ((not (and (integer? position) (exact? position)))
+                 (eopl:error
+                  'ref-list
+                  "Error de Tipo: El índice debe ser un entero"))
+                ((or (< position 0)
+                     (>= position (length elements)))
+                 (eopl:error
+                  'ref-list
+                  "Índice fuera de rango: ~s"
+                  position))
+                (else
+                 (list-ref elements position)))))))
+
+      ;; Retorna la cantidad de elementos de una lista.
+      (list-length-exp (arg-exp)
+        (cases list-value
+          (require-list 'length (eval-expression arg-exp env))
+          (a-list (element-type elements)
+            (length elements))))
 
       ;; Construcción de la instancia interna SAT (FNC)[cite: 5, 6]
       (fnc-exp (num-vars first-clause rest-clauses)
@@ -360,28 +661,30 @@
       (while-exp (test-exp body-exp)
         (let loop ((last-val 0))
           (if (true-value? (eval-expression test-exp env))
-              (loop (eval-expression body-exp env))
+              (loop (eval-expression/expected body-exp env expected-type))
               last-val)))
 
       (begin-exp (exp exps)
-        (let loop ((acc (eval-expression exp env))
-                   (rest exps))
+        (let loop ((current exp) (rest exps))
           (if (null? rest)
-              acc
-              (loop (eval-expression (car rest) env) (cdr rest)))))
+              (eval-expression/expected current env expected-type)
+              (begin
+                (eval-expression current env)
+                (loop (car rest) (cdr rest))))))
 
       (if-exp (test-exp true-exp false-exp)
         (if (true-value? (eval-expression test-exp env))
-            (eval-expression true-exp env)
-            (eval-expression false-exp env)))
-
+            (eval-expression/expected true-exp env expected-type)
+            (eval-expression/expected false-exp env expected-type)))
       
       (for-exp (init-exp cond-exp step-exp body-exp)
         (begin
           (eval-expression init-exp env)
           (let loop ((last-val 0))
             (if (true-value? (eval-expression cond-exp env))
-                (let ((res (eval-expression body-exp env)))
+                (let ((res
+                       (eval-expression/expected
+                        body-exp env expected-type)))
                   (eval-expression step-exp env)
                   (loop res))
                 last-val))))
@@ -391,15 +694,18 @@
         (let ((target (eval-expression target-exp env)))
           (let loop ((vals case-vals) (exps case-exps))
             (cond
-              ((null? vals) (eval-expression default-exp env))
+              ((null? vals)
+               (eval-expression/expected default-exp env expected-type))
               ((equal? target (eval-expression (car vals) env))
-               (eval-expression (car exps) env))
+               (eval-expression/expected
+                (car exps) env expected-type))
               (else (loop (cdr vals) (cdr exps)))))))
 
       (block-exp (ids exps body-exp)
         (let* ((vals (map (lambda (e) (eval-expression e env)) exps))
                (refs (map (lambda (v) (a-ref #f (get-value-type v) (vector v))) vals)))
-          (eval-expression body-exp (extend-env ids refs env))))
+          (eval-expression/expected
+           body-exp (extend-env ids refs env) expected-type)))
 
       ;;Procedimientos
       (lambda-exp (ids body)
@@ -408,14 +714,14 @@
       (call-exp (rator rands)
         (let ((f (eval-expression rator env))
               (args (map (lambda (e) (eval-expression e env)) rands)))
-          (apply-procedure f args)))
+          (apply-procedure f args expected-type)))
 
       
       (letrec-exp (id rhs body)
         (let* ((cell (vector #f))
                (new-env (extend-env (list id) (list (a-ref #f 'proc cell)) env)))
           (vector-set! cell 0 (eval-expression rhs new-env))
-          (eval-expression body new-env)))
+          (eval-expression/expected body new-env expected-type)))
 
       (solve-exp (e)
         (let ((inst (eval-expression e env)))
@@ -428,13 +734,14 @@
 
 ;; Aplicación de procedimientos
 (define apply-procedure
-  (lambda (f args)
+  (lambda (f args expected-type)
     (cases proc-val f
       (procedure (ids body saved-env)
-        (eval-expression body
+        (eval-expression/expected body
           (extend-env ids
                       (map (lambda (v) (a-ref #f (get-value-type v) (vector v))) args)
-                      saved-env))))))
+                      saved-env)
+          expected-type)))))
 
 ;; Búsqueda exhaustiva sobre todas las asignaciones
 (define sat-abs (lambda (x) (if (< x 0) (- x) x)))
@@ -583,3 +890,47 @@ PROGRAM {
 ;; Prueba SAT: instancia insatisfactible (x1 y -x1 a la vez) -> devuelve 0
 (scan&parse "GLOBALS { int x = 1; } PROGRAM { proc main() { return solve(FNC 2 ( (1 or 2) and (-1 or 2) )); } }")
 (run "GLOBALS { int x = 1; } PROGRAM { proc main() { return solve(FNC 1 ( (1) and (-1) )); } }")
+
+
+;; =============================================================================
+;; PRUEBAS DE ANDRÉS: LISTAS INMUTABLES (ADENDO 5)
+;; =============================================================================
+
+;; Literales, empty, empty? y list?
+(scan&parse "GLOBALS { list<int> xs = (1, 2, 3); } PROGRAM { proc main() { return length(xs); } }")
+(run "GLOBALS { list<int> xs = (1, 2, 3); } PROGRAM { proc main() { return length(xs); } }") ; 3
+(run "GLOBALS { list<int> xs = empty; } PROGRAM { proc main() { return empty?(xs); } }") ; #t
+(run "GLOBALS { int x = 42; } PROGRAM { proc main() { return list?(x); } }") ; #f
+
+;; make-list, head y tail generan resultados nuevos
+(run "GLOBALS { list<int> xs = make-list(1, empty); } PROGRAM { proc main() { return head(xs); } }") ; 1
+(run "GLOBALS { list<int> xs = (1, 2, 3); } PROGRAM { proc main() { return head(tail(xs)); } }") ; 2
+
+;; append, ref-list y length
+(run "GLOBALS { list<int> a = (1, 2); list<int> b = (3, 4); } PROGRAM { proc main() { return ref-list(append(a, b), 3); } }") ; 4
+(run "GLOBALS { list<string> xs = (\"a\", \"b\"); } PROGRAM { proc main() { return length(xs); } }") ; 2
+
+;; list<void> permite elementos heterogéneos
+(run "GLOBALS { list<void> xs = (1, True, \"texto\"); } PROGRAM { proc main() { return ref-list(xs, 1); } }") ; #t
+
+;; Inmutabilidad: tail produce otra lista y original conserva su primer elemento
+(run "GLOBALS { list<int> xs = (10, 20); const list<int> original = xs; } PROGRAM { proc main() { return begin set xs -> tail(xs); head(original) end; } }") ; 10
+
+;; Casos de error para ejecutar individualmente durante la revisión en DrRacket:
+;; (run "GLOBALS { list<int> xs = (1, True); } PROGRAM { proc main() { return xs; } }")
+;; Error de tipo por elementos heterogéneos.
+;;
+;; (run "GLOBALS { list<int> xs = empty; } PROGRAM { proc main() { return head(xs); } }")
+;; Error por consultar head de una lista vacía.
+;;
+;; (run "GLOBALS { list<int> xs = empty; } PROGRAM { proc main() { return tail(xs); } }")
+;; Error por consultar tail de una lista vacía.
+;;
+;; (run "GLOBALS { list<int> xs = (1, 2); } PROGRAM { proc main() { return ref-list(xs, 2); } }")
+;; Error por índice fuera de rango.
+;;
+;; (run "GLOBALS { list<int> xs = (1); } PROGRAM { proc main() { return ref-list(xs, 0.5); } }")
+;; Error porque el índice no es un entero.
+;;
+;; (run "GLOBALS { list<int> xs = (1); list<bool> ys = (True); } PROGRAM { proc main() { return append(xs, ys); } }")
+;; Error por concatenar listas de tipos incompatibles.
