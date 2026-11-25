@@ -115,6 +115,7 @@
     ;; 9. Procedimientos
     (expression ("lambda" "(" (arbno identifier) ")" expression) lambda-exp)
     (expression ("call" expression "(" (arbno expression) ")") call-exp)
+    (expression ("letrec" identifier "=" expression "in" expression) letrec-exp)
    ))
 
 ;; Generación automática de tipos de datos abstractos (Datatypes) e Interpretador SLLGEN[cite: 1, 22]
@@ -407,6 +408,13 @@
         (let ((f (eval-expression rator env))
               (args (map (lambda (e) (eval-expression e env)) rands)))
           (apply-procedure f args)))
+
+      
+      (letrec-exp (id rhs body)
+        (let* ((cell (vector #f))
+               (new-env (extend-env (list id) (list (a-ref #f 'proc cell)) env)))
+          (vector-set! cell 0 (eval-expression rhs new-env))
+          (eval-expression body new-env)))
       
       )))
 
@@ -515,3 +523,11 @@ PROGRAM {
 ;; Prueba PROC: lambda con dos parámetros, llamada con 3 y 4 -> devuelve 12
 (scan&parse "GLOBALS { int x = 1; } PROGRAM { proc main() { return BLOCK LOCALS { f = lambda (a b) (a * b); } { call f (3 4) }; } }")
 (run "GLOBALS { int x = 1; } PROGRAM { proc main() { return BLOCK LOCALS { f = lambda (a b) (a * b); } { call f (3 4) }; } }")
+
+;; Prueba PROC: factorial recursivo con letrec, factorial de 5 -> devuelve 120
+(scan&parse "GLOBALS { int x = 1; } PROGRAM { proc main() { return letrec fact = lambda (n) if [(n < 1)] { 1 } else { (n * call fact ((n - 1))) } in call fact (5); } }")
+(run "GLOBALS { int x = 1; } PROGRAM { proc main() { return letrec fact = lambda (n) if [(n < 1)] { 1 } else { (n * call fact ((n - 1))) } in call fact (5); } }")
+
+;; Prueba PROC: factorial recursivo con letrec, factorial de 3 -> devuelve 6
+(scan&parse "GLOBALS { int x = 1; } PROGRAM { proc main() { return letrec fact = lambda (n) if [(n < 1)] { 1 } else { (n * call fact ((n - 1))) } in call fact (3); } }")
+(run "GLOBALS { int x = 1; } PROGRAM { proc main() { return letrec fact = lambda (n) if [(n < 1)] { 1 } else { (n * call fact ((n - 1))) } in call fact (3); } }")
