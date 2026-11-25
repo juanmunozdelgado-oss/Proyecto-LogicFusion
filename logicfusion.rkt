@@ -110,6 +110,7 @@
     (expression ("if" "[" expression "]" "{" expression "}" "else" "{" expression "}") if-exp)
     (expression ("for" "[" expression ";" expression ";" expression "]" "{" expression "}") for-exp)
     (expression ("switch" "[" expression "]" "{" (arbno "case" expression ":" expression ";") "default" ":" expression "}") switch-exp)
+    (expression ("BLOCK" "LOCALS" "{" (arbno identifier "=" expression ";") "}" "{" expression "}") block-exp)
    ))
 
 ;; Generación automática de tipos de datos abstractos (Datatypes) e Interpretador SLLGEN[cite: 1, 22]
@@ -382,6 +383,11 @@
               ((equal? target (eval-expression (car vals) env))
                (eval-expression (car exps) env))
               (else (loop (cdr vals) (cdr exps)))))))
+
+      (block-exp (ids exps body-exp)
+        (let* ((vals (map (lambda (e) (eval-expression e env)) exps))
+               (refs (map (lambda (v) (a-ref #f (get-value-type v) (vector v))) vals)))
+          (eval-expression body-exp (extend-env ids refs env))))
       
       )))
 
@@ -461,3 +467,12 @@ PROGRAM {
 
 (scan&parse "GLOBALS { int op = 7; } PROGRAM { proc main() { return switch [op] { case 1: 100; case 2: 200; default: 999 }; } }")
 (run "GLOBALS { int op = 7; } PROGRAM { proc main() { return switch [op] { case 1: 100; case 2: 200; default: 999 }; } }")
+
+
+;; Prueba BLOCK con LOCALS: usa variable local x = 50 dentro del bloque -> devuelve 55
+(scan&parse "GLOBALS { int x = 10; } PROGRAM { proc main() { return BLOCK LOCALS { x = 50; } { (x + 5) }; } }")
+(run "GLOBALS { int x = 10; } PROGRAM { proc main() { return BLOCK LOCALS { x = 50; } { (x + 5) }; } }")
+
+;; Prueba BLOCK con dos variables locales: a = 2, b = 3 -> devuelve 6
+(scan&parse "GLOBALS { int x = 10; } PROGRAM { proc main() { return BLOCK LOCALS { a = 2; b = 3; } { (a * b) }; } }")
+(run "GLOBALS { int x = 10; } PROGRAM { proc main() { return BLOCK LOCALS { a = 2; b = 3; } { (a * b) }; } }")
