@@ -300,9 +300,10 @@
             (let ((expected-element-type
                    (list-element-type expected-type)))
               (cond
-                ;; list<void> permite elementos de cualquier tipo.
+                ;; list<void> permite listas heterogéneas creadas como void,
+                ;; pero conserva el tipo real de una lista tipada asignada.
                 ((eqv? expected-element-type 'void)
-                 (a-list 'void elements))
+                 val)
 
                 ;; empty adopta el tipo declarado de la variable.
                 ((eqv? actual-type 'unknown)
@@ -404,9 +405,6 @@
                      (cond
                        ((eqv? left-type 'unknown) right-type)
                        ((eqv? right-type 'unknown) left-type)
-                       ((or (eqv? left-type 'void)
-                            (eqv? right-type 'void))
-                        'void)
                        ((equal? left-type right-type) left-type)
                        (else
                         (eopl:error
@@ -1302,6 +1300,11 @@ PROGRAM {
 
 ;; Literales, empty, empty? y list?
 (scan&parse "GLOBALS { list<int> xs = (1, 2, 3); } PROGRAM { proc main() { return length(xs); } }")
+(scan&parse "GLOBALS { list<int> xs = empty; } PROGRAM { proc main() { return empty?(xs); } }")
+(scan&parse "GLOBALS { list<int> xs = make-list(1, empty); } PROGRAM { proc main() { return list?(xs); } }")
+(scan&parse "GLOBALS { list<int> xs = (1, 2); } PROGRAM { proc main() { return head(tail(xs)); } }")
+(scan&parse "GLOBALS { list<int> a = (1); list<int> b = (2); } PROGRAM { proc main() { return append(a, b); } }")
+(scan&parse "GLOBALS { list<int> xs = (1, 2); } PROGRAM { proc main() { return ref-list(xs, 0); } }")
 (run "GLOBALS { list<int> xs = (1, 2, 3); } PROGRAM { proc main() { return length(xs); } }") ; 3
 (run "GLOBALS { list<int> xs = empty; } PROGRAM { proc main() { return empty?(xs); } }") ; #t
 (run "GLOBALS { int x = 42; } PROGRAM { proc main() { return list?(x); } }") ; #f
@@ -1338,6 +1341,9 @@ PROGRAM {
 ;;
 ;; (run "GLOBALS { list<int> xs = (1); list<bool> ys = (True); } PROGRAM { proc main() { return append(xs, ys); } }")
 ;; Error por concatenar listas de tipos incompatibles.
+;;
+;; (run "GLOBALS { list<int> a = (1); list<bool> b = (True); list<void> c = append(a, b); } PROGRAM { proc main() { return c; } }")
+;; Error: list<void> no debe ocultar que los operandos de append tienen tipos distintos.
 
 
 ;; =============================================================================
@@ -1346,6 +1352,11 @@ PROGRAM {
 
 ;; Literal, vector? y acceso desde índice cero
 (scan&parse "GLOBALS { vector<int> v = [10, 20, 30]; } PROGRAM { proc main() { return ref-vector(v, 1); } }")
+(scan&parse "GLOBALS { vector<int> v = make-vector(2); } PROGRAM { proc main() { return vector?(v); } }")
+(scan&parse "GLOBALS { vector<int> v = [1, 2]; } PROGRAM { proc main() { return set-vector(v, 0, 9); } }")
+(scan&parse "GLOBALS { vector<int> v = [1, 2]; } PROGRAM { proc main() { return append-vector(v, 3); } }")
+(scan&parse "GLOBALS { vector<int> v = [1, 2]; } PROGRAM { proc main() { return delete-val-vector(v, 0); } }")
+(scan&parse "GLOBALS { vector<int> v = [1, 2]; } PROGRAM { proc main() { return insert-val-vector(v, 1, 9); } }")
 (run "GLOBALS { vector<int> v = [10, 20, 30]; } PROGRAM { proc main() { return ref-vector(v, 1); } }") ; 20
 (run "GLOBALS { vector<int> v = [1]; } PROGRAM { proc main() { return vector?(v); } }") ; #t
 (run "GLOBALS { int x = 1; } PROGRAM { proc main() { return vector?(x); } }") ; #f
@@ -1401,6 +1412,7 @@ PROGRAM {
 
 ;; longitud cuenta caracteres y no incluye las comillas del literal
 (scan&parse "GLOBALS { string texto = \"LogicFusion\"; } PROGRAM { proc main() { return longitud(texto); } }")
+(scan&parse "GLOBALS { string a = \"Logic\"; string b = \"Fusion\"; } PROGRAM { proc main() { return concatenar(a, b); } }")
 (run "GLOBALS { string texto = \"LogicFusion\"; } PROGRAM { proc main() { return longitud(texto); } }") ; 11
 (run "GLOBALS { string texto = \"\"; } PROGRAM { proc main() { return longitud(texto); } }") ; 0
 
