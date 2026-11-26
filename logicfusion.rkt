@@ -459,8 +459,11 @@
         (let ((expected-element-type
                (vector-element-type expected-type)))
           (cond
+            ;; Una vista vector<void> no debe borrar el tipo real de un
+            ;; vector compartido. Así no se puede modificar vector<int>
+            ;; con valores de otro tipo mediante un alias vector<void>.
             ((eqv? expected-element-type 'void)
-             (a-vector 'void cell))
+             val)
             ((equal? expected-element-type actual-type)
              val)
             (else
@@ -1387,6 +1390,9 @@ PROGRAM {
 ;;
 ;; (run "GLOBALS { vector<int> v = [1]; } PROGRAM { proc main() { return insert-val-vector(v, 2, 9); } }")
 ;; Error porque la posición de inserción supera el tamaño.
+;;
+;; (run "GLOBALS { vector<int> original = [1]; vector<void> alias = original; } PROGRAM { proc main() { return set-vector(alias, 0, \"texto\"); } }")
+;; Error: el alias conserva el tipo real int del vector compartido.
 
 
 ;; =============================================================================
