@@ -113,6 +113,10 @@
     (expression ("delete-val-vector" "(" expression "," expression ")") vector-delete-exp)
     (expression ("insert-val-vector" "(" expression "," expression "," expression ")") vector-insert-exp)
 
+    ;; Primitivas de cadenas
+    (expression ("longitud" "(" expression ")") string-length-exp)
+    (expression ("concatenar" "(" expression "," expression ")") string-concat-exp)
+
     (primitive-op ("+") add-op)
     (primitive-op ("-") sub-op)
     (primitive-op ("*") mul-op)
@@ -591,6 +595,25 @@
              (vector->list old-storage) valid-position checked)))
           val)))))
 
+;; El escáner conserva las comillas del lexema. El intérprete almacena
+;; únicamente los caracteres contenidos entre ellas.
+(define normalize-string-literal
+  (lambda (datum)
+    (let ((size (string-length datum)))
+      (if (and (>= size 2)
+               (char=? (string-ref datum 0) #\")
+               (char=? (string-ref datum (- size 1)) #\"))
+          (substring datum 1 (- size 1))
+          datum))))
+
+;; Valida los argumentos de longitud y concatenar.
+(define require-string
+  (lambda (who val)
+    (if (string? val)
+        val
+        (eopl:error who
+                    "Error de Tipo: Se esperaba una cadena"))))
+
 ;; Infiere el tipo dinámico de un R-valor en tiempo de ejecución[cite: 2]
 (define get-value-type
   (lambda (val)
@@ -749,11 +772,29 @@
       ;; Literales Primitivos
       (lit-exp (datum) datum)
       (float-exp (datum) datum)
-      (string-exp (datum) datum)
+      (string-exp (datum)
+        (normalize-string-literal datum))
       (bool-exp (b-val)
         (cases bool-val b-val
           (true-bool () #t)
           (false-bool () #f)))
+
+      ;; Retorna la cantidad de caracteres de una cadena.
+      (string-length-exp (arg-exp)
+        (string-length
+         (require-string
+          'longitud
+          (eval-expression arg-exp env))))
+
+      ;; Une dos cadenas y retorna una cadena nueva.
+      (string-concat-exp (left-exp right-exp)
+        (string-append
+         (require-string
+          'concatenar
+          (eval-expression left-exp env))
+         (require-string
+          'concatenar
+          (eval-expression right-exp env))))
 
       ;; Búsqueda de variables en el ambiente[cite: 198]
       (var-exp (id)
@@ -1282,3 +1323,27 @@ PROGRAM {
 ;;
 ;; (run "GLOBALS { vector<int> v = [1]; } PROGRAM { proc main() { return insert-val-vector(v, 2, 9); } }")
 ;; Error porque la posición de inserción supera el tamaño.
+
+
+;; =============================================================================
+;; PRUEBAS DE ANDRÉS: PRIMITIVAS DE CADENAS
+;; =============================================================================
+
+;; longitud cuenta caracteres y no incluye las comillas del literal
+(scan&parse "GLOBALS { string texto = \"LogicFusion\"; } PROGRAM { proc main() { return longitud(texto); } }")
+(run "GLOBALS { string texto = \"LogicFusion\"; } PROGRAM { proc main() { return longitud(texto); } }") ; 11
+(run "GLOBALS { string texto = \"\"; } PROGRAM { proc main() { return longitud(texto); } }") ; 0
+
+;; concatenar funciona con literales, variables y resultados anidados
+(run "GLOBALS { string a = \"Logic\"; string b = \"Fusion\"; } PROGRAM { proc main() { return concatenar(a, b); } }") ; "LogicFusion"
+(run "GLOBALS { string a = \"A\"; } PROGRAM { proc main() { return concatenar(concatenar(a, \"B\"), \"C\"); } }") ; "ABC"
+
+;; Las cadenas originales permanecen sin cambios
+(run "GLOBALS { string a = \"Hola\"; string b = concatenar(a, \" mundo\"); } PROGRAM { proc main() { return a; } }") ; "Hola"
+
+;; Casos de error para ejecutar individualmente durante la revisión en DrRacket:
+;; (run "GLOBALS { int x = 10; } PROGRAM { proc main() { return longitud(x); } }")
+;; Error de tipo porque longitud requiere una cadena.
+;;
+;; (run "GLOBALS { string x = \"a\"; } PROGRAM { proc main() { return concatenar(x, 10); } }")
+;; Error de tipo porque ambos argumentos de concatenar deben ser cadenas.
