@@ -131,7 +131,9 @@
     ;; 7. Sintaxis FNC (Módulo SAT)[cite: 5]
     ;; Permite crear instancias FNC n ( (lit or lit) and (lit) ... )[cite: 5]
     (expression ("FNC" number "(" clausula-sat (arbno "and" clausula-sat) ")") fnc-exp)
-    (clausula-sat ("(" literal-sat (arbno "or" literal-sat) ")") sat-clause)
+    ;; separated-list permite reconocer () y reportar semánticamente
+    ;; que una cláusula SAT no puede estar vacía.
+    (clausula-sat ("(" (separated-list literal-sat "or") ")") sat-clause)
     (literal-sat (number) pos-literal)
     (literal-sat ("-" number) neg-literal)
 
@@ -677,13 +679,71 @@
 (define extract-clause
   (lambda (clause-ast)
     (cases clausula-sat clause-ast
-      (sat-clause (first-lit rest-lits)
-        (map extract-literal-val (cons first-lit rest-lits))))))
+      (sat-clause (literals)
+        (map extract-literal-val literals)))))
+
+;; Valida un literal con respecto al número de variables declarado.
+(define validate-sat-literal
+  (lambda (literal num-vars)
+    (cond
+      ((not (and (integer? literal) (exact? literal)))
+       (eopl:error
+        'FNC
+        "Error de Tipo: Cada literal SAT debe ser un entero"))
+      ((= literal 0)
+       (eopl:error
+        'FNC
+        "Literal SAT inválido: el índice 0 no existe"))
+      ((> (if (< literal 0) (- literal) literal) num-vars)
+       (eopl:error
+        'FNC
+        "Literal SAT fuera de rango: ~s para n = ~s"
+        literal
+        num-vars))
+      (else literal))))
+
+;; Una cláusula debe contener al menos un literal válido.
+(define validate-sat-clause
+  (lambda (clause num-vars)
+    (if (null? clause)
+        (eopl:error
+         'FNC
+         "Cláusula SAT inválida: debe contener al menos un literal")
+        (let loop ((remaining clause))
+          (if (null? remaining)
+              clause
+              (begin
+                (validate-sat-literal (car remaining) num-vars)
+                (loop (cdr remaining))))))))
+
+;; Recorre y valida todas las cláusulas de la instancia.
+(define validate-sat-clauses
+  (lambda (clauses num-vars)
+    (if (null? clauses)
+        (eopl:error
+         'FNC
+         "La instancia SAT debe contener al menos una cláusula")
+        (let loop ((remaining clauses))
+          (if (null? remaining)
+              clauses
+              (begin
+                (validate-sat-clause (car remaining) num-vars)
+                (loop (cdr remaining))))))))
 
 ;; Construye la estructura interna sat-instance a partir de las cláusulas FNC[cite: 5, 6]
 (define parse-fnc-to-sat
   (lambda (num-vars first-clause rest-clauses)
-    (sat-instance num-vars (map extract-clause (cons first-clause rest-clauses)))))
+    (if (not (and (integer? num-vars)
+                  (exact? num-vars)
+                  (> num-vars 0)))
+        (eopl:error
+         'FNC
+         "Número de variables inválido: n debe ser un entero mayor que cero")
+        (let ((clauses
+               (map extract-clause
+                    (cons first-clause rest-clauses))))
+          (validate-sat-clauses clauses num-vars)
+          (sat-instance num-vars clauses)))))
 
 ;; Convierte el nodo AST de un tipo a su descriptor interno.
 (define type-spec->symbol
@@ -1062,9 +1122,13 @@
 
       (solve-exp (e)
         (let ((inst (eval-expression e env)))
-          (cases sat-value inst
-            (sat-instance (n clauses)
-              (if (sat-solvable? n clauses) 1 0)))))
+          (if (not (sat-value? inst))
+              (eopl:error
+               'solve
+               "Error de Tipo: solve esperaba una instancia SAT")
+              (cases sat-value inst
+                (sat-instance (n clauses)
+                  (if (sat-solvable? n clauses) 1 0))))))
       
       )))
 
@@ -1347,3 +1411,43 @@ PROGRAM {
 ;;
 ;; (run "GLOBALS { string x = \"a\"; } PROGRAM { proc main() { return concatenar(x, 10); } }")
 ;; Error de tipo porque ambos argumentos de concatenar deben ser cadenas.
+
+
+;; =============================================================================
+;; PRUEBAS DE ANDRÉS: VALIDACIONES SAT Y SOLVE
+;; =============================================================================
+
+;; Instancia válida satisfactible
+(scan&parse "GLOBALS { sat f = FNC 3 ((1 or -2) and (2 or 3)); } PROGRAM { proc main() { return solve(f); } }")
+(run "GLOBALS { sat f = FNC 3 ((1 or -2) and (2 or 3)); } PROGRAM { proc main() { return solve(f); } }") ; 1
+
+;; Instancia válida insatisfactible
+(run "GLOBALS { sat f = FNC 1 ((1) and (-1)); } PROGRAM { proc main() { return solve(f); } }") ; 0
+
+;; Literales en los límites positivo y negativo permitidos
+(run "GLOBALS { sat f = FNC 3 ((3) and (-3 or 1)); } PROGRAM { proc main() { return solve(f); } }") ; 1
+
+;; Casos de error para ejecutar individualmente durante la revisión en DrRacket:
+;; (run "GLOBALS { sat f = FNC 0 ((1)); } PROGRAM { proc main() { return f; } }")
+;; Error porque n debe ser mayor que cero.
+;;
+;; (run "GLOBALS { sat f = FNC 2 ((3)); } PROGRAM { proc main() { return f; } }")
+;; Error porque el literal positivo supera n.
+;;
+;; (run "GLOBALS { sat f = FNC 2 ((-3)); } PROGRAM { proc main() { return f; } }")
+;; Error porque el literal negativo supera -n.
+;;
+;; (run "GLOBALS { sat f = FNC 2 ((0)); } PROGRAM { proc main() { return f; } }")
+;; Error porque el índice cero no representa una variable SAT.
+;;
+;; (run "GLOBALS { sat f = FNC 2 (() and (1)); } PROGRAM { proc main() { return f; } }")
+;; Error porque una cláusula no puede estar vacía.
+;;
+;; (run "GLOBALS { int x = 10; } PROGRAM { proc main() { return solve(x); } }")
+;; Error de tipo porque solve requiere una instancia SAT.
+;;
+;; (run "GLOBALS { list<int> xs = (1, 2); } PROGRAM { proc main() { return solve(xs); } }")
+;; Error de tipo porque una lista tampoco es una instancia SAT.
+;;
+;; (scan&parse "GLOBALS { sat f = FNC 2.5 ((1)); } PROGRAM { proc main() { return f; } }")
+;; Error sintáctico porque la gramática de FNC solo admite un entero para n.
