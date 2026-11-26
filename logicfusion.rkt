@@ -67,6 +67,7 @@
     (type-spec ("void") void-type)
     (type-spec ("sat") sat-type)
     (type-spec ("list" "<" type-spec ">") list-type)
+    (type-spec ("vector" "<" type-spec ">") vector-type)
 
     ;; 4. Expresiones Primarias y Literales[cite: 1, 2]
     (expression (float-number) float-exp)
@@ -101,6 +102,16 @@
     (expression ("append" "(" expression "," expression ")") list-append-exp)
     (expression ("ref-list" "(" expression "," expression ")") list-ref-exp)
     (expression ("length" "(" expression ")") list-length-exp)
+
+    ;; Literales y primitivas de vectores mutables del Adendo 7
+    (expression ("[" expression (arbno "," expression) "]") vector-literal-exp)
+    (expression ("vector?" "(" expression ")") vector-test-exp)
+    (expression ("make-vector" "(" expression ")") make-vector-exp)
+    (expression ("ref-vector" "(" expression "," expression ")") vector-ref-exp)
+    (expression ("set-vector" "(" expression "," expression "," expression ")") vector-set-exp)
+    (expression ("append-vector" "(" expression "," expression ")") vector-append-exp)
+    (expression ("delete-val-vector" "(" expression "," expression ")") vector-delete-exp)
+    (expression ("insert-val-vector" "(" expression "," expression "," expression ")") vector-insert-exp)
 
     (primitive-op ("+") add-op)
     (primitive-op ("-") sub-op)
@@ -165,6 +176,19 @@
 (define list-element-type
   (lambda (type)
     (if (list-type-descriptor? type)
+        (cadr type)
+        #f)))
+
+;; Reconoce descriptores (vector T) y obtiene el tipo T.
+(define vector-type-descriptor?
+  (lambda (type)
+    (and (list? type)
+         (= (length type) 2)
+         (eqv? (car type) 'vector))))
+
+(define vector-element-type
+  (lambda (type)
+    (if (vector-type-descriptor? type)
         (cadr type)
         #f)))
 
@@ -252,6 +276,12 @@
 (define-datatype list-value list-value?
   (a-list (element-type type-descriptor?)
           (elements list?)))
+
+;; La celda conserva la identidad mutable aunque cambie el tamaño del vector.
+;; Su posición cero contiene el vector de Racket con los elementos actuales.
+(define-datatype vector-value vector-value?
+  (a-vector (element-type type-descriptor?)
+            (cell vector?)))
 
 ;; Valida una lista frente a su tipo declarado.
 (define check-list-type
@@ -379,6 +409,188 @@
                 (a-list result-type
                         (append left-elements right-elements))))))))))
 
+;; Verifica que un valor sea un vector de LogicFusion.
+(define require-vector
+  (lambda (who val)
+    (if (vector-value? val)
+        val
+        (eopl:error who
+                    "Error de Tipo: Se esperaba un vector"))))
+
+;; Comprueba la homogeneidad de los elementos de un vector.
+(define vector-elements-have-type?
+  (lambda (values expected-type)
+    (cond
+      ((null? values) #t)
+      ((eqv? expected-type 'void) #t)
+      ((equal? (get-value-type (car values)) expected-type)
+       (vector-elements-have-type? (cdr values) expected-type))
+      (else #f))))
+
+;; Convierte una lista de Racket en almacenamiento vectorial mutable.
+(define values->vector
+  (lambda (values)
+    (list->vector values)))
+
+;; Construye un vector literal y valida el tipo de sus elementos.
+(define make-vector-literal-value
+  (lambda (values expected-type)
+    (let ((element-type
+           (if (vector-type-descriptor? expected-type)
+               (vector-element-type expected-type)
+               (get-value-type (car values)))))
+      (if (vector-elements-have-type? values element-type)
+          (a-vector element-type (vector (values->vector values)))
+          (eopl:error
+           'vector-literal
+           "Error de Tipo: Los elementos del vector deben ser homogéneos")))))
+
+;; Valida un vector frente al tipo declarado vector<T>.
+(define check-vector-type
+  (lambda (expected-type val)
+    (cases vector-value (require-vector 'check-vector-type val)
+      (a-vector (actual-type cell)
+        (let ((expected-element-type
+               (vector-element-type expected-type)))
+          (cond
+            ((eqv? expected-element-type 'void)
+             (a-vector 'void cell))
+            ((equal? expected-element-type actual-type)
+             val)
+            (else
+             (eopl:error
+              'check-vector-type
+              "Error de Tipo: Se esperaba vector<~s> pero se obtuvo vector<~s>"
+              expected-element-type
+              actual-type))))))))
+
+;; Valor inicial empleado por make-vector según el tipo declarado.
+(define default-vector-value
+  (lambda (element-type)
+    (cond
+      ((eqv? element-type 'int) 0)
+      ((eqv? element-type 'float) 0.0)
+      ((eqv? element-type 'string) "")
+      ((eqv? element-type 'bool) #f)
+      ((eqv? element-type 'void) 0)
+      (else
+       (eopl:error
+        'make-vector
+        "No existe un valor inicial para el tipo ~s"
+        element-type)))))
+
+;; Crea un vector de tamaño n usando el tipo declarado como contexto.
+(define make-sized-vector-value
+  (lambda (count expected-type)
+    (cond
+      ((not (and (integer? count) (exact? count)))
+       (eopl:error 'make-vector
+                   "Error de Tipo: El tamaño debe ser un entero"))
+      ((< count 0)
+       (eopl:error 'make-vector
+                   "El tamaño no puede ser negativo: ~s"
+                   count))
+      ((not (vector-type-descriptor? expected-type))
+       (eopl:error 'make-vector
+                   "No se puede inferir el tipo del vector"))
+      (else
+       (let ((element-type (vector-element-type expected-type)))
+         (a-vector
+          element-type
+          (vector
+           (make-vector count
+                        (default-vector-value element-type)))))))))
+
+;; Comprueba el tipo de un valor antes de almacenarlo en un vector.
+(define check-vector-element
+  (lambda (who element-type val)
+    (if (or (eqv? element-type 'void)
+            (equal? element-type (get-value-type val)))
+        val
+        (eopl:error
+         who
+         "Error de Tipo: Se esperaba un elemento ~s pero se obtuvo ~s"
+         element-type
+         (get-value-type val)))))
+
+;; Valida índices. insert-val-vector admite la posición final.
+(define validate-vector-index
+  (lambda (who position size allow-end?)
+    (cond
+      ((not (and (integer? position) (exact? position)))
+       (eopl:error who
+                   "Error de Tipo: El índice debe ser un entero"))
+      ((or (< position 0)
+           (if allow-end? (> position size) (>= position size)))
+       (eopl:error who "Índice fuera de rango: ~s" position))
+      (else position))))
+
+;; Agrega un elemento al final conservando la identidad del vector.
+(define append-vector-value!
+  (lambda (val new-value)
+    (cases vector-value (require-vector 'append-vector val)
+      (a-vector (element-type cell)
+        (let* ((checked
+                (check-vector-element
+                 'append-vector element-type new-value))
+               (elements (vector->list (vector-ref cell 0))))
+          (vector-set! cell 0
+                       (list->vector (append elements (list checked))))
+          val)))))
+
+;; Operaciones auxiliares sobre listas para cambiar el tamaño del vector.
+(define remove-list-position
+  (lambda (values position)
+    (if (= position 0)
+        (cdr values)
+        (cons (car values)
+              (remove-list-position (cdr values) (- position 1))))))
+
+(define insert-list-position
+  (lambda (values position new-value)
+    (if (= position 0)
+        (cons new-value values)
+        (cons (car values)
+              (insert-list-position
+               (cdr values) (- position 1) new-value)))))
+
+;; Elimina una posición y desplaza los elementos siguientes.
+(define delete-vector-value!
+  (lambda (val position)
+    (cases vector-value (require-vector 'delete-val-vector val)
+      (a-vector (element-type cell)
+        (let* ((old-storage (vector-ref cell 0))
+               (old-size (vector-length old-storage))
+               (valid-position
+                (validate-vector-index
+                 'delete-val-vector position old-size #f)))
+          (vector-set!
+           cell 0
+           (list->vector
+            (remove-list-position
+             (vector->list old-storage) valid-position)))
+          val)))))
+
+;; Inserta un elemento y desplaza a la derecha los elementos siguientes.
+(define insert-vector-value!
+  (lambda (val position new-value)
+    (cases vector-value (require-vector 'insert-val-vector val)
+      (a-vector (element-type cell)
+        (let* ((checked
+                (check-vector-element
+                 'insert-val-vector element-type new-value))
+               (old-storage (vector-ref cell 0))
+               (old-size (vector-length old-storage))
+               (valid-position
+                (validate-vector-index
+                 'insert-val-vector position old-size #t)))
+          (vector-set!
+           cell 0
+           (list->vector
+            (insert-list-position
+             (vector->list old-storage) valid-position checked)))
+          val)))))
+
 ;; Infiere el tipo dinámico de un R-valor en tiempo de ejecución[cite: 2]
 (define get-value-type
   (lambda (val)
@@ -394,6 +606,10 @@
        (cases list-value val
          (a-list (element-type elements)
            (list 'list element-type))))
+      ((vector-value? val)
+       (cases vector-value val
+         (a-vector (element-type cell)
+           (list 'vector element-type))))
       (else 'unknown))))
 
 ;; Revisa coincidencia de tipos y realiza conversión implícita de int a float.
@@ -406,6 +622,10 @@
             ;; Las listas necesitan revisar también el tipo de sus elementos.
             ((list-type-descriptor? expected-type)
              (check-list-type expected-type val))
+
+            ;; Los vectores validan el tipo de sus elementos.
+            ((vector-type-descriptor? expected-type)
+             (check-vector-type expected-type val))
 
             ;; Tipos simples iguales.
             ((equal? expected-type val-type)
@@ -453,7 +673,9 @@
       (void-type () 'void)
       (sat-type () 'sat)
       (list-type (element-type)
-        (list 'list (type-spec->symbol element-type))))))
+        (list 'list (type-spec->symbol element-type)))
+      (vector-type (element-type)
+        (list 'vector (type-spec->symbol element-type))))))
 
 ;; Procedimientos: representación de valores proc
 (define-datatype proc-val proc-val?
@@ -652,6 +874,80 @@
           (require-list 'length (eval-expression arg-exp env))
           (a-list (element-type elements)
             (length elements))))
+
+      ;; Construye un vector literal mutable [e1, e2, ...].
+      (vector-literal-exp (first-exp other-exps)
+        (let ((values
+               (map
+                (lambda (item)
+                  (eval-expression/expected
+                   item env (vector-element-type expected-type)))
+                (cons first-exp other-exps))))
+          (make-vector-literal-value values expected-type)))
+
+      ;; Indica si el valor es un vector de LogicFusion.
+      (vector-test-exp (arg-exp)
+        (vector-value? (eval-expression arg-exp env)))
+
+      ;; Crea un vector inicializado según su tipo declarado.
+      (make-vector-exp (size-exp)
+        (make-sized-vector-value
+         (eval-expression size-exp env)
+         expected-type))
+
+      ;; Consulta una posición del vector.
+      (vector-ref-exp (vector-exp position-exp)
+        (let ((val (eval-expression vector-exp env))
+              (position (eval-expression position-exp env)))
+          (cases vector-value (require-vector 'ref-vector val)
+            (a-vector (element-type cell)
+              (let* ((storage (vector-ref cell 0))
+                     (valid-position
+                      (validate-vector-index
+                       'ref-vector
+                       position
+                       (vector-length storage)
+                       #f)))
+                (vector-ref storage valid-position))))))
+
+      ;; Modifica una posición existente del vector.
+      (vector-set-exp (vector-exp position-exp value-exp)
+        (let ((val (eval-expression vector-exp env))
+              (position (eval-expression position-exp env))
+              (new-value (eval-expression value-exp env)))
+          (cases vector-value (require-vector 'set-vector val)
+            (a-vector (element-type cell)
+              (let* ((storage (vector-ref cell 0))
+                     (valid-position
+                      (validate-vector-index
+                       'set-vector
+                       position
+                       (vector-length storage)
+                       #f))
+                     (checked
+                      (check-vector-element
+                       'set-vector element-type new-value)))
+                (vector-set! storage valid-position checked)
+                checked)))))
+
+      ;; Agrega un elemento al final del mismo vector.
+      (vector-append-exp (vector-exp value-exp)
+        (append-vector-value!
+         (eval-expression vector-exp env)
+         (eval-expression value-exp env)))
+
+      ;; Elimina una posición del mismo vector.
+      (vector-delete-exp (vector-exp position-exp)
+        (delete-vector-value!
+         (eval-expression vector-exp env)
+         (eval-expression position-exp env)))
+
+      ;; Inserta un valor en la posición indicada del mismo vector.
+      (vector-insert-exp (vector-exp position-exp value-exp)
+        (insert-vector-value!
+         (eval-expression vector-exp env)
+         (eval-expression position-exp env)
+         (eval-expression value-exp env)))
 
       ;; Construcción de la instancia interna SAT (FNC)[cite: 5, 6]
       (fnc-exp (num-vars first-clause rest-clauses)
@@ -934,3 +1230,55 @@ PROGRAM {
 ;;
 ;; (run "GLOBALS { list<int> xs = (1); list<bool> ys = (True); } PROGRAM { proc main() { return append(xs, ys); } }")
 ;; Error por concatenar listas de tipos incompatibles.
+
+
+;; =============================================================================
+;; PRUEBAS DE ANDRÉS: VECTORES MUTABLES (ADENDO 7)
+;; =============================================================================
+
+;; Literal, vector? y acceso desde índice cero
+(scan&parse "GLOBALS { vector<int> v = [10, 20, 30]; } PROGRAM { proc main() { return ref-vector(v, 1); } }")
+(run "GLOBALS { vector<int> v = [10, 20, 30]; } PROGRAM { proc main() { return ref-vector(v, 1); } }") ; 20
+(run "GLOBALS { vector<int> v = [1]; } PROGRAM { proc main() { return vector?(v); } }") ; #t
+(run "GLOBALS { int x = 1; } PROGRAM { proc main() { return vector?(x); } }") ; #f
+
+;; make-vector usa el valor inicial correspondiente al tipo declarado
+(run "GLOBALS { vector<int> v = make-vector(3); } PROGRAM { proc main() { return ref-vector(v, 2); } }") ; 0
+(run "GLOBALS { vector<bool> v = make-vector(2); } PROGRAM { proc main() { return ref-vector(v, 0); } }") ; #f
+
+;; set-vector modifica una posición del vector original
+(run "GLOBALS { vector<int> v = [10, 20, 30]; } PROGRAM { proc main() { return begin set-vector(v, 1, 50); ref-vector(v, 1) end; } }") ; 50
+
+;; append-vector cambia el tamaño del mismo vector
+(run "GLOBALS { vector<int> v = [10, 20]; } PROGRAM { proc main() { return begin append-vector(v, 30); ref-vector(v, 2) end; } }") ; 30
+
+;; delete-val-vector elimina y desplaza a la izquierda
+(run "GLOBALS { vector<int> v = [10, 20, 30]; } PROGRAM { proc main() { return begin delete-val-vector(v, 1); ref-vector(v, 1) end; } }") ; 30
+
+;; insert-val-vector inserta y desplaza a la derecha
+(run "GLOBALS { vector<int> v = [10, 20, 30]; } PROGRAM { proc main() { return begin insert-val-vector(v, 1, 15); ref-vector(v, 2) end; } }") ; 20
+
+;; Mutabilidad real: dos variables observan los cambios del mismo vector
+(run "GLOBALS { vector<int> v = [1, 2]; void alias = v; } PROGRAM { proc main() { return begin append-vector(v, 3); ref-vector(alias, 2) end; } }") ; 3
+
+;; vector<void> permite elementos heterogéneos
+(run "GLOBALS { vector<void> v = [1, True, \"texto\"]; } PROGRAM { proc main() { return begin append-vector(v, 4.5); ref-vector(v, 3) end; } }") ; 4.5
+
+;; Casos de error para ejecutar individualmente durante la revisión en DrRacket:
+;; (run "GLOBALS { vector<int> v = [1, True]; } PROGRAM { proc main() { return v; } }")
+;; Error por elementos heterogéneos.
+;;
+;; (run "GLOBALS { vector<int> v = [1, 2]; } PROGRAM { proc main() { return ref-vector(v, 2); } }")
+;; Error por índice fuera de rango.
+;;
+;; (run "GLOBALS { vector<int> v = [1]; } PROGRAM { proc main() { return set-vector(v, 0, True); } }")
+;; Error por valor incompatible con vector<int>.
+;;
+;; (run "GLOBALS { vector<int> v = make-vector(2.5); } PROGRAM { proc main() { return v; } }")
+;; Error porque el tamaño debe ser un entero.
+;;
+;; (run "GLOBALS { vector<int> v = [1]; } PROGRAM { proc main() { return delete-val-vector(v, (0 - 1)); } }")
+;; Error por índice negativo.
+;;
+;; (run "GLOBALS { vector<int> v = [1]; } PROGRAM { proc main() { return insert-val-vector(v, 2, 9); } }")
+;; Error porque la posición de inserción supera el tamaño.
