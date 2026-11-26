@@ -903,9 +903,14 @@
                (list-element-type expected-type)))
              expected-type))))
 
-      ;; La lista vacía comienza sin un tipo de elemento conocido.
+      ;; empty adopta el tipo esperado cuando aparece en una declaración
+      ;; list<T>. Fuera de un contexto tipado conserva unknown.
       (empty-list-exp ()
-        (a-list 'unknown '()))
+        (a-list
+         (if (list-type-descriptor? expected-type)
+             (list-element-type expected-type)
+             'unknown)
+         '()))
 
       ;; Retorna #t solamente si el valor es una lista vacía.
       (empty-list-test-exp (arg-exp)
@@ -1319,6 +1324,7 @@ PROGRAM {
 
 ;; list<void> permite elementos heterogéneos
 (run "GLOBALS { list<void> xs = (1, True, \"texto\"); } PROGRAM { proc main() { return ref-list(xs, 1); } }") ; #t
+(run "GLOBALS { list<void> xs = empty; } PROGRAM { proc main() { return begin set xs -> make-list(1, xs); set xs -> make-list(True, xs); length(xs) end; } }") ; 2
 
 ;; Inmutabilidad: tail produce otra lista y original conserva su primer elemento
 (run "GLOBALS { list<int> xs = (10, 20); const list<int> original = xs; } PROGRAM { proc main() { return begin set xs -> tail(xs); head(original) end; } }") ; 10
