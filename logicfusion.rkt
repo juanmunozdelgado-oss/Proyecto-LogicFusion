@@ -1133,14 +1133,14 @@
           (eval-expression/expected body new-env expected-type)))
 
       (solve-exp (e)
-        (let ((inst (eval-expression e env)))
-          (if (not (sat-value? inst))
-              (eopl:error
-               'solve
-               "Error de Tipo: solve esperaba una instancia SAT")
-              (cases sat-value inst
-                (sat-instance (n clauses)
-                  (if (sat-solvable? n clauses) 1 0))))))
+  (let ((inst (eval-expression e env)))
+    (if (not (sat-value? inst))
+        (eopl:error
+         'solve
+         "Error de Tipo: solve esperaba una instancia SAT")
+        (cases sat-value inst
+          (sat-instance (n clauses)
+            (sat-find-assignment n clauses))))))
       
       )))
 
@@ -1183,13 +1183,20 @@
           ((sat-clause-true? (car clauses) assign)
            (sat-formula-true? (cdr clauses) assign))
           (else #f))))
-(define sat-solvable?
+(define sat-find-assignment
   (lambda (n clauses)
     (let loop ((assigns (sat-all-assignments n)))
       (cond ((null? assigns) #f)
-            ((sat-formula-true? clauses (car assigns)) #t)
+            ((sat-formula-true? clauses (car assigns)) (car assigns))
             (else (loop (cdr assigns)))))))
 
+
+;; Convertidor auxiliar: convierte booleanos a enteros (True -> 1, False -> 0)
+(define to-num
+  (lambda (v)
+    (cond
+      ((boolean? v) (if v 1 0))
+      (else v))))
 
 
 ;; Evaluación de operadores aritméticos y relacionales binarios[cite: 3]
@@ -1451,13 +1458,13 @@ PROGRAM {
 
 ;; Instancia válida satisfactible
 (scan&parse "GLOBALS { sat f = FNC 3 ((1 or -2) and (2 or 3)); } PROGRAM { proc main() { return solve(f); } }")
-(run "GLOBALS { sat f = FNC 3 ((1 or -2) and (2 or 3)); } PROGRAM { proc main() { return solve(f); } }") ; 1
+(run "GLOBALS { sat f = FNC 3 ((1 or -2) and (2 or 3)); } PROGRAM { proc main() { return solve(f); } }") ; #t #t #t
 
 ;; Instancia válida insatisfactible
-(run "GLOBALS { sat f = FNC 1 ((1) and (-1)); } PROGRAM { proc main() { return solve(f); } }") ; 0
+(run "GLOBALS { sat f = FNC 1 ((1) and (-1)); } PROGRAM { proc main() { return solve(f); } }") ; #f
 
 ;; Literales en los límites positivo y negativo permitidos
-(run "GLOBALS { sat f = FNC 3 ((3) and (-3 or 1)); } PROGRAM { proc main() { return solve(f); } }") ; 1
+(run "GLOBALS { sat f = FNC 3 ((3) and (-3 or 1)); } PROGRAM { proc main() { return solve(f); } }") ; #t #t #t
 
 ;; Casos de error para ejecutar individualmente durante la revisión en DrRacket:
 ;; (run "GLOBALS { sat f = FNC 0 ((1)); } PROGRAM { proc main() { return f; } }")
