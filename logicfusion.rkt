@@ -1,22 +1,5 @@
 #lang eopl
 ;; =============================================================================
-;; Proyecto Final: LogicFusion
-;; Curso: Fundamentos de Lenguajes de Programación
-;; Integrantes:
-;;   - Juan Manuel Muñoz Delgado - Código: 2436424
-;;   - Juan Camilo Ramos Hoyos- Código: 2438212
-;;   - Andres Felipe Muñoz Moreno - Código: 2438908
-;;   - Emmanuel Paez Hurtado - Código: 2419847
-;; 
-;; Repositorio: https://github.com/juanmunozdelgado-oss/Proyecto-LogicFusion.git
-;; Declaración de IA: Se utilizó asistencia de LLM como apoyo de consulta y 
-;;                    estructuración según las guías del curso.
-;; =============================================================================
-
-
-
-#lang eopl
-;; =============================================================================
 ;; PROYECTO FINAL: LOGICFUSION
 ;; Curso: Fundamentos de Lenguajes de Programación - Universidad del Valle
 ;; 
@@ -74,12 +57,13 @@
     (type-spec ("void") void-type)
     (type-spec ("sat") sat-type)
 
-    ;; 4. Expresiones Primarias y Literales[cite: 1, 2]
+    ;; 4. Expresiones Primarias y Literales
     (expression (float-number) float-exp)
     (expression (number) lit-exp)
     (expression (string-lit) string-exp)
     (expression (bool-val) bool-exp)
     (expression (identifier) var-exp)
+    (expression ("-" expression) minus-exp)
     
     ;; Literales Booleanos True / False[cite: 2]
     (bool-val ("True") true-bool)
@@ -328,24 +312,39 @@
               (val2 (eval-expression exp2 env)))
           (apply-primitive-op op val1 val2)))
 
+      (minus-exp (exp1)
+        (let ((val (eval-expression exp1 env)))
+          (if (number? val)
+              (- val)
+              (eopl:error 'eval-expression "El operador '-' unario requiere un número: ~s" val))))
+
       ;; Construcción de la instancia interna SAT (FNC)[cite: 5, 6]
       (fnc-exp (num-vars first-clause rest-clauses)
         (parse-fnc-to-sat num-vars first-clause rest-clauses)))))
 
-;; Evaluación de operadores aritméticos y relacionales binarios[cite: 3]
+;; Convertidor auxiliar: convierte booleanos a enteros (True -> 1, False -> 0)
+(define to-num
+  (lambda (v)
+    (cond
+      ((boolean? v) (if v 1 0))
+      (else v))))
+
+;; Evaluación de operadores aritméticos y relacionales binarios
 (define apply-primitive-op
   (lambda (op val1 val2)
-    (cases primitive-op op
-      (add-op () (+ val1 val2))
-      (sub-op () (- val1 val2))
-      (mul-op () (* val1 val2))
-      (div-op () (/ val1 val2))
-      (eq-op () (equal? val1 val2))
-      (neq-op () (not (equal? val1 val2)))
-      (gt-op () (> val1 val2))
-      (lt-op () (< val1 val2))
-      (gte-op () (>= val1 val2))
-      (lte-op () (<= val1 val2)))))
+    (let ((n1 (to-num val1))
+          (n2 (to-num val2)))
+      (cases primitive-op op
+        (add-op () (+ n1 n2))
+        (sub-op () (- n1 n2))
+        (mul-op () (* n1 n2))
+        (div-op () (/ n1 n2))
+        (eq-op () (equal? val1 val2))
+        (neq-op () (not (equal? val1 val2)))
+        (gt-op () (> n1 n2))
+        (lt-op () (< n1 n2))
+        (gte-op () (>= n1 n2))
+        (lte-op () (<= n1 n2))))))
 
 ;; Función ejecutora principal
 (define run
